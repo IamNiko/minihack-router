@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎯 Control de Dispositivo - {{ mac_address }}</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #000 0%, #1a1a1a 100%);
+            min-height: 100vh;
+            color: white;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            padding: 30px;
+            border-radius: 20px;
+            margin-bottom: 30px;
+            border: 2px solid rgba(0, 255, 136, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, #00ff88, #00cc6a);
+            opacity: 0.1;
+            z-index: -1;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #fff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .device-mac {
+            font-family: 'Courier New', monospace;
+            font-size: 1.4rem;
+            color: #00ff88;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+        
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            background: rgba(0, 255, 136, 0.2);
+            border: 2px solid rgba(0, 255, 136, 0.5);
+            border-radius: 10px;
+            color: #00ff88;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+        
+        .back-button:hover {
+            background: rgba(0, 255, 136, 0.3);
+            transform: translateX(-5px);
+        }
+        
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .control-card {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            border-radius: 20px;
+            padding: 30px;
+            border: 2px solid rgba(0, 255, 136, 0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .control-card:hover {
+            border-color: #00ff88;
+            box-shadow: 0 10px 30px rgba(0, 255, 136, 0.2);
+            transform: translateY(-5px);
+        }
+        
+        .card-title {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: #00ff88;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 15px;
+            border-radius: 25px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        
+        .status-blocked {
+            background: rgba(255, 107, 107, 0.2);
+            border: 2px solid #ff6b6b;
+            color: #ff6b6b;
+        }
+        
+        .status-allowed {
+            background: rgba(0, 255, 136, 0.2);
+            border: 2px solid #00ff88;
+            color: #00ff88;
+        }
+        
+        .status-scheduled {
+            background: rgba(255, 206, 84, 0.2);
+            border: 2px solid #ffce54;
+            color: #ffce54;
+        }
+        
+        .control-button {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(45deg, #ff6b6b, #ff5252);
+            color: white;
+        }
+        
+        .btn-success {
+            background: linear-gradient(45deg, #00ff88, #00cc6a);
+            color: #000;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(45deg, #4ecdc4, #44a08d);
+            color: white;
+        }
+        
+        .btn-warning {
+            background: linear-gradient(45deg, #ffce54, #f39c12);
+            color: #000;
+        }
+        
+        .control-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #00ff88;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid rgba(0, 255, 136, 0.3);
+            border-radius: 8px;
+            background: rgba(26, 26, 26, 0.8);
+            color: white;
+            font-size: 1rem;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #00ff88;
+            box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
+        }
+        
+        .checkbox-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: rgba(0, 255, 136, 0.1);
+            border-radius: 8px;
+            border: 1px solid rgba(0, 255, 136, 0.3);
+        }
+        
+        .checkbox-item input[type="checkbox"] {
+            width: auto;
+            transform: scale(1.2);
+        }
+        
+        .time-input-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .schedule-day {
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+        
+        .schedule-day h4 {
+            color: #00ff88;
+            margin-bottom: 10px;
+            text-transform: capitalize;
+        }
+        
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .alert-error {
+            background: rgba(255, 107, 107, 0.2);
+            border: 2px solid #ff6b6b;
+            color: #ff6b6b;
+        }
+        
+        .alert-success {
+            background: rgba(0, 255, 136, 0.2);
+            border: 2px solid #00ff88;
+            color: #00ff88;
+        }
+        
+        .alert-warning {
+            background: rgba(255, 206, 84, 0.2);
+            border: 2px solid #ffce54;
+            color: #ffce54;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .info-item {
+            background: rgba(0, 255, 136, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 255, 136, 0.3);
+        }
+        
+        .info-label {
+            font-weight: bold;
+            color: #00ff88;
+            margin-bottom: 5px;
+        }
+        
+        .info-value {
+            font-family: 'Courier New', monospace;
+            opacity: 0.9;
+        }
+        
+        .loading-spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(0, 255, 136, 0.3);
+            border-radius: 50%;
+            border-top-color: #00ff88;
+            animation: spin 1s ease-in-out infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+        }
+        
+        .modal-content {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            margin: 15% auto;
+            padding: 30px;
+            border-radius: 20px;
+            border: 2px solid rgba(0, 255, 136, 0.3);
+            width: 80%;
+            max-width: 500px;
+        }
+        
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .close:hover {
+            color: #00ff88;
+        }
+        
+        @media (max-width: 768px) {
+            .control-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .time-input-group {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .device-mac {
+                font-size: 1.1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-button">
+            <i class="fas fa-arrow-left"></i>
+            Volver al Dashboard
+        </a>
+        
+        <div class="header">
+            <h1><i class="fas fa-mobile-alt"></i> Control de Dispositivo</h1>
+            <div class="device-mac">{{ mac_address }}</div>
+            <div id="device-status" class="status-indicator">
+                <i class="fas fa-spinner fa-spin"></i>
+                Cargando estado...
+            </div>
+        </div>
+        
+        <div id="alert" class="alert"></div>
+        
+        <div class="control-grid">
+            <!-- Control de Acceso -->
+            <div class="control-card">
+                <div class="card-title">
+                    <i class="fas fa-ban"></i>
+                    Control de Acceso a Internet
+                </div>
+                
+                <div id="access-info" class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Estado Actual</div>
+                        <div class="info-value" id="current-status">Cargando...</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Última Acción</div>
+                        <div class="info-value" id="last-action">N/A</div>
+                    </div>
+                </div>
+                
+                <div id="access-controls">
+                    <button class="control-button btn-danger" onclick="blockDevice()">
+                        <i class="fas fa-ban"></i>
+                        Bloquear Internet
+                    </button>
+                    <button class="control-button btn-success" onclick="unblockDevice()">
+                        <i class="fas fa-check"></i>
+                        Permitir Internet
+                    </button>
+                </div>
+                
+                <div class="form-group" style="margin-top: 20px;">
+                    <label for="block-reason">Motivo del bloqueo (opcional):</label>
+                    <input type="text" id="block-reason" placeholder="Ej: Tiempo de estudio, hora de dormir, etc.">
+                </div>
+            </div>
+            
+            <!-- Horarios de Acceso -->
+            <div class="control-card">
+                <div class="card-title">
+                    <i class="fas fa-clock"></i>
+                    Horarios de Acceso
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enable-daily-schedule"> 
+                        Habilitar restricción diaria
+                    </label>
+                </div>
+                
+                <div id="daily-schedule" style="display: none;">
+                    <div class="time-input-group">
+                        <div class="form-group">
+                            <label for="start-time">Hora de inicio:</label>
+                            <input type="time" id="start-time" value="08:00">
+                        </div>
+                        <div class="form-group">
+                            <label for="end-time">Hora de fin:</label>
+                            <input type="time" id="end-time" value="22:00">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enable-weekly-schedule"> 
+                        Habilitar restricción semanal
+                    </label>
+                </div>
+                
+                <div id="weekly-schedule" style="display: none;">
+                    <div id="weekly-days"></div>
+                </div>
+                
+                <button class="control-button btn-primary" onclick="saveSchedule()">
+                    <i class="fas fa-save"></i>
+                    Guardar Horarios
+                </button>
+            </div>
+            
+            <!-- Control Parental -->
+            <div class="control-card">
+                <div class="card-title">
+                    <i class="fas fa-shield-alt"></i>
+                    Control Parental
+                </div>
+                
+                <div class="form-group">
+                    <label>Filtros de contenido:</label>
+                    <div class="checkbox-group">
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="filter-adult" value="adult_content">
+                            <label for="filter-adult">Contenido para adultos</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="filter-violence" value="violence">
+                            <label for="filter-violence">Violencia</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="filter-gambling" value="gambling">
+                            <label for="filter-gambling">Juegos de azar</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="filter-drugs" value="drugs">
+                            <label for="filter-drugs">Drogas y alcohol</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="filter-malware" value="malware">
+                            <label for="filter-malware">Malware y virus</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="filter-ads" value="ads">
+                            <label for="filter-ads">Publicidad</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="filter-level">Nivel de filtrado:</label>
+                    <select id="filter-level">
+                        <option value="none">Sin filtrado</option>
+                        <option value="light">Ligero</option>
+                        <option value="moderate">Moderado</option>
+                        <option value="strict">Estricto</option>
+                        <option value="child">Niños</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="custom-domains">Dominios bloqueados (uno por línea):</label>
+                    <textarea id="custom-domains" rows="4" placeholder="ejemplo.com&#10;sitio-bloqueado.net"></textarea>
+                </div>
+                
+                <button class="control-button btn-warning" onclick="saveContentFilter()">
+                    <i class="fas fa-filter"></i>
+                    Aplicar Filtros
+                </button>
+            </div>
+            
+            <!-- Información del Dispositivo -->
+            <div class="control-card">
+                <div class="card-title">
+                    <i class="fas fa-info-circle"></i>
+                    Información del Dispositivo
+                </div>
+                
+                <div id="device-info" class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Dirección MAC</div>
+                        <div class="info-value">{{ mac_address }}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Señal WiFi</div>
+                        <div class="info-value" id="wifi-signal">Cargando...</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Datos Recibidos</div>
+                        <div class="info-value" id="rx-bytes">Cargando...</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Datos Enviados</div>
+                        <div class="info-value" id="tx-bytes">Cargando...</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Tiempo Conectado</div>
+                        <div class="info-value" id="connected-time">Cargando...</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Nombre/Hostname</div>
+                        <div class="info-value" id="device-hostname">
+                            <input type="text" id="hostname-input" placeholder="Asignar nombre..." style="background: transparent; border: 1px solid rgba(0,255,136,0.3); padding: 5px;">
+                        </div>
+                    </div>
+                </div>
+                
+                <button class="control-button btn-primary" onclick="saveDeviceName()">
+                    <i class="fas fa-tag"></i>
+                    Guardar Nombre
+                </button>
+                
+                <button class="control-button btn-primary" onclick="refreshDeviceInfo()">
+                    <i class="fas fa-sync-alt"></i>
+                    Actualizar Info
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal para confirmaciones -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="modal-title">Confirmar Acción</h2>
+            <p id="modal-message">¿Está seguro de realizar esta acción?</p>
+            <div style="text-align: center; margin-top: 20px;">
+                <button class="control-button btn-danger" onclick="closeModal()">Cancelar</button>
+                <button class="control-button btn-success" id="confirm-action">Confirmar</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const MAC_ADDRESS = '{{ mac_address }}';
+        let deviceData = {};
+        
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+            setupWeeklySchedule();
+            loadDeviceInfo();
+            setupEventListeners();
+            
+            // Refresh device info every 30 seconds
+            setInterval(loadDeviceInfo, 30000);
+        });
+        
+        // Setup event listeners
+        function setupEventListeners() {
+            document.getElementById('enable-daily-schedule').addEventListener('change', function() {
+                document.getElementById('daily-schedule').style.display = this.checked ? 'block' : 'none';
+            });
+            
+            document.getElementById('enable-weekly-schedule').addEventListener('change', function() {
+                document.getElementById('weekly-schedule').style.display = this.checked ? 'block' : 'none';
+            });
+        }
+        
+        // Setup weekly schedule
+        function setupWeeklySchedule() {
+            const days = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+            const container = document.getElementById('weekly-days');
+            
+            days.forEach(day => {
+                const dayDiv = document.createElement('div');
+                dayDiv.className = 'schedule-day';
+                dayDiv.innerHTML = `
+                    <h4>${day}</h4>
+                    <label>
+                        <input type="checkbox" id="block-${day}" value="${day}">
+                        Bloquear este día
+                    </label>
+                    <div class="time-input-group" style="margin-top: 10px;">
+                        <div class="form-group">
+                            <label>Inicio:</label>
+                            <input type="time" id="start-${day}" value="08:00">
+                        </div>
+                        <div class="form-group">
+                            <label>Fin:</label>
+                            <input type="time" id="end-${day}" value="22:00">
+                        </div>
+                    </div>
+                `;
+                container.appendChild(dayDiv);
+            });
+        }
+        
+        // Load device information
+        async function loadDeviceInfo() {
+            try {
+                const response = await fetch(`/api/devices/${MAC_ADDRESS}`);
+                if (!response.ok) throw new Error('Failed to load device info');
+                
+                deviceData = await response.json();
+                updateDeviceDisplay();
+                
+            } catch (error) {
+                console.error('Error loading device info:', error);
+                showAlert('Error cargando información del dispositivo', 'error');
+            }
+        }
+        
+        // Update device display
+        function updateDeviceDisplay() {
+            // Update status indicator
+            const statusEl = document.getElementById('device-status');
+            if (deviceData.is_blocked) {
+                statusEl.className = 'status-indicator status-blocked';
+                statusEl.innerHTML = '<i class="fas fa-ban"></i> Bloqueado';
+            } else if (deviceData.scheduled_block) {
+                statusEl.className = 'status-indicator status-scheduled';
+                statusEl.innerHTML = '<i class="fas fa-clock"></i> Restringido por horario';
+            } else {
+                statusEl.className = 'status-indicator status-allowed';
+                statusEl.innerHTML = '<i class="fas fa-check"></i> Permitido';
+            }
+            
+            // Update current status
+            document.getElementById('current-status').textContent = 
+                deviceData.is_blocked ? 'Bloqueado' : 'Permitido';
+            
+            // Update device info if available from WiFi data
+            loadWiFiDeviceInfo();
+            
+            // Load current schedule
+            loadCurrentSchedule();
+            
+            // Load current content filter
+            loadCurrentContentFilter();
+        }
+        
+        // Load WiFi device info
+        async function loadWiFiDeviceInfo() {
+            try {
+                const response = await fetch('/api/wifi');
+                if (!response.ok) return;
+                
+                const devices = await response.json();
+                const device = devices.find(d => d.mac.toLowerCase() === MAC_ADDRESS.toLowerCase());
+                
+                if (device) {
+                    document.getElementById('wifi-signal').textContent = device.signal || 'N/A';
+                    document.getElementById('rx-bytes').textContent = formatBytes(device.rx_bytes || 0);
+                    document.getElementById('tx-bytes').textContent = formatBytes(device.tx_bytes || 0);
+                    document.getElementById('connected-time').textContent = device.connected_time || 'N/A';
+                }
+            } catch (error) {
+                console.error('Error loading WiFi info:', error);
+            }
+        }
+        
+        // Load current schedule
+        function loadCurrentSchedule() {
+            const schedule = deviceData.schedule || {};
+            
+            // Daily schedule
+            if (schedule.daily_hours?.enabled) {
+                document.getElementById('enable-daily-schedule').checked = true;
+                document.getElementById('daily-schedule').style.display = 'block';
+                document.getElementById('start-time').value = schedule.daily_hours.start_time || '08:00';
+                document.getElementById('end-time').value = schedule.daily_hours.end_time || '22:00';
+            }
+            
+            // Weekly schedule
+            if (schedule.weekly_schedule?.enabled) {
+                document.getElementById('enable-weekly-schedule').checked = true;
+                document.getElementById('weekly-schedule').style.display = 'block';
+                
+                const weeklyConfig = schedule.weekly_schedule;
+                const days = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+                
+                days.forEach(day => {
+                    const dayConfig = weeklyConfig[day];
+                    if (dayConfig) {
+                        document.getElementById(`block-${day}`).checked = dayConfig.blocked || false;
+                        document.getElementById(`start-${day}`).value = dayConfig.start_time || '08:00';
+                        document.getElementById(`end-${day}`).value = dayConfig.end_time || '22:00';
+                    }
+                });
+            }
+        }
+        
+        // Load current content filter
+        function loadCurrentContentFilter() {
+            const filter = deviceData.content_filter || {};
+            
+            if (filter.blocked_categories) {
+                filter.blocked_categories.forEach(category => {
+                    const checkbox = document.querySelector(`input[value="${category}"]`);
+                    if (checkbox) checkbox.checked = true;
+                });
+            }
+            
+            if (filter.level) {
+                document.getElementById('filter-level').value = filter.level;
+            }
+            
+            if (filter.custom_domains) {
+                document.getElementById('custom-domains').value = filter.custom_domains.join('\n');
+            }
+        }
+        
+        // Block device
+        async function blockDevice() {
+            const reason = document.getElementById('block-reason').value || 'Bloqueado manualmente';
+            
+            showConfirmModal(
+                'Bloquear Dispositivo',
+                `¿Está seguro de bloquear el acceso a internet para este dispositivo?\n\nMotivo: ${reason}`,
+                async () => {
+                    try {
+                        const response = await fetch(`/api/devices/${MAC_ADDRESS}/block`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ reason })
+                        });
+                        
+                        const result = await response.json();
+                        
+                        if (response.ok) {
+                            showAlert('Dispositivo bloqueado exitosamente', 'success');
+                            loadDeviceInfo();
+                        } else {
+                            showAlert(result.error || 'Error bloqueando dispositivo', 'error');
+                        }
+                    } catch (error) {
+                        console.error('Error unblocking device:', error);
+                        showAlert('Error de conexión', 'error');
+                    }
+                }
+            );
+        }
+        
+        // Save schedule
+        async function saveSchedule() {
+            try {
+                const scheduleConfig = {
+                    daily_hours: {
+                        enabled: document.getElementById('enable-daily-schedule').checked,
+                        start_time: document.getElementById('start-time').value,
+                        end_time: document.getElementById('end-time').value
+                    },
+                    weekly_schedule: {
+                        enabled: document.getElementById('enable-weekly-schedule').checked
+                    }
+                };
+                
+                // Add weekly schedule details
+                if (scheduleConfig.weekly_schedule.enabled) {
+                    const days = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+                    days.forEach(day => {
+                        scheduleConfig.weekly_schedule[day] = {
+                            blocked: document.getElementById(`block-${day}`).checked,
+                            start_time: document.getElementById(`start-${day}`).value,
+                            end_time: document.getElementById(`end-${day}`).value
+                        };
+                    });
+                }
+                
+                const response = await fetch(`/api/devices/${MAC_ADDRESS}/schedule`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(scheduleConfig)
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showAlert('Horarios guardados exitosamente', 'success');
+                    loadDeviceInfo();
+                } else {
+                    showAlert(result.error || 'Error guardando horarios', 'error');
+                }
+            } catch (error) {
+                console.error('Error saving schedule:', error);
+                showAlert('Error de conexión', 'error');
+            }
+        }
+        
+        // Save content filter
+        async function saveContentFilter() {
+            try {
+                const checkedCategories = [];
+                document.querySelectorAll('.checkbox-group input[type="checkbox"]:checked').forEach(cb => {
+                    checkedCategories.push(cb.value);
+                });
+                
+                const customDomains = document.getElementById('custom-domains').value
+                    .split('\n')
+                    .map(domain => domain.trim())
+                    .filter(domain => domain.length > 0);
+                
+                const filterConfig = {
+                    enabled: checkedCategories.length > 0 || customDomains.length > 0,
+                    blocked_categories: checkedCategories,
+                    level: document.getElementById('filter-level').value,
+                    custom_domains: customDomains
+                };
+                
+                const response = await fetch(`/api/devices/${MAC_ADDRESS}/content-filter`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(filterConfig)
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showAlert('Filtros de contenido aplicados exitosamente', 'success');
+                    loadDeviceInfo();
+                } else {
+                    showAlert(result.error || 'Error aplicando filtros', 'error');
+                }
+            } catch (error) {
+                console.error('Error saving content filter:', error);
+                showAlert('Error de conexión', 'error');
+            }
+        }
+        
+        // Save device name
+        async function saveDeviceName() {
+            const hostname = document.getElementById('hostname-input').value.trim();
+            if (!hostname) {
+                showAlert('Por favor ingrese un nombre para el dispositivo', 'warning');
+                return;
+            }
+            
+            try {
+                // This would typically save to a local database or configuration
+                // For now, we'll just show success and store locally
+                localStorage.setItem(`device_name_${MAC_ADDRESS}`, hostname);
+                showAlert('Nombre del dispositivo guardado', 'success');
+            } catch (error) {
+                console.error('Error saving device name:', error);
+                showAlert('Error guardando nombre del dispositivo', 'error');
+            }
+        }
+        
+        // Refresh device info
+        function refreshDeviceInfo() {
+            loadDeviceInfo();
+            showAlert('Información actualizada', 'success');
+        }
+        
+        // Show alert
+        function showAlert(message, type = 'error') {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = `alert alert-${type}`;
+            alert.style.display = 'block';
+            
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 5000);
+        }
+        
+        // Show confirmation modal
+        function showConfirmModal(title, message, onConfirm) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-message').textContent = message;
+            document.getElementById('confirmModal').style.display = 'block';
+            
+            document.getElementById('confirm-action').onclick = () => {
+                closeModal();
+                onConfirm();
+            };
+        }
+        
+        // Close modal
+        function closeModal() {
+            document.getElementById('confirmModal').style.display = 'none';
+        }
+        
+        // Format bytes
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('confirmModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+        
+        // Load saved device name on page load
+        window.addEventListener('load', function() {
+            const savedName = localStorage.getItem(`device_name_${MAC_ADDRESS}`);
+            if (savedName) {
+                document.getElementById('hostname-input').value = savedName;
+            }
+        });
+    </script>
+</body>
+</html>) {
+                        console.error('Error blocking device:', error);
+                        showAlert('Error de conexión', 'error');
+                    }
+                }
+            );
+        }
+        
+        // Unblock device
+        async function unblockDevice() {
+            showConfirmModal(
+                'Desbloquear Dispositivo',
+                '¿Está seguro de permitir el acceso a internet para este dispositivo?',
+                async () => {
+                    try {
+                        const response = await fetch(`/api/devices/${MAC_ADDRESS}/unblock`, {
+                            method: 'POST'
+                        });
+                        
+                        const result = await response.json();
+                        
+                        if (response.ok) {
+                            showAlert('Dispositivo desbloqueado exitosamente', 'success');
+                            loadDeviceInfo();
+                        } else {
+                            showAlert(result.error || 'Error desbloqueando dispositivo', 'error');
+                        }
+                    } catch (error

@@ -1,0 +1,19 @@
+{
+  "blocked_devices": [
+    "98:af:65:31:ef:1b"
+  ],
+  "device_schedules": {
+    "98:af:65:31:ef:1b": {
+      "daily_hours": {
+        "enabled": false,
+        "start_time": "08:00",
+        "end_time": "22:00"
+      },
+      "weekly_schedule": {
+        "enabled": false
+      }
+    }
+  },
+  "content_filters": {},
+  "last_updated": "2025-07-13T16:05:15.199192"
+}

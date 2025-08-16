@@ -1,0 +1,33 @@
+# 🔧 Backend en tiempo real
+Flask==3.1.1
+Flask-SocketIO==5.3.6
+flask-cors==6.0.1
+eventlet==0.35.1
+
+# 📊 Gráficos y visualización
+plotly==6.2.0
+pandas==2.3.1
+
+# 📡 Monitoreo de sistema y red
+psutil==7.0.0
+
+# 🧠 Manejo de fechas y JSON
+python-dateutil==2.9.0.post0
+
+# 📦 Utilidades y vigilancia de archivos
+watchdog==6.0.0
+requests==2.32.4
+
+# 🔍 Dependencias base
+certifi==2025.7.9
+charset-normalizer==3.4.2
+click==8.2.1
+idna==3.10
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.2
+six==1.17.0
+urllib3==2.5.0
+tzdata==2025.2
+Werkzeug==3.1.3
+
