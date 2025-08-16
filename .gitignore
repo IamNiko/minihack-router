@@ -6,3 +6,6 @@ logs/
 *.log
 *.db
 .DS_Store
+
+users_config.json
+instance/
