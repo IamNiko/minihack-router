@@ -25,6 +25,7 @@ import secrets
 from functools import wraps
 from flask_socketio import SocketIO, emit, join_room, leave_room, disconnect
 import eventlet
+from config import get_config
 
 # Configure professional logging
 logging.basicConfig(
@@ -830,7 +831,8 @@ class EnhancedRouterDashboard:
     
     def __init__(self):
         self.app = Flask(__name__)
-        self.app.secret_key = secrets.token_hex(32)  # Random secret key
+        self.app.config.from_object(get_config())
+        # self.app.secret_key = secrets.token_hex(32)  # Random secret key
         CORS(self.app, origins=['*'], supports_credentials=True)
         
         # Initialize managers

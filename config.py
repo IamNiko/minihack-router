@@ -6,6 +6,7 @@
 from __future__ import annotations
 import os
 from typing import Optional
+import secrets
 
 def _get_bool(name: str, default: bool = False) -> bool:
     v = os.getenv(name)
@@ -15,7 +16,7 @@ def _get_bool(name: str, default: bool = False) -> bool:
 
 class BaseConfig:
     # Keep defaults conservative. You can override via env vars.
-    SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "CHANGE_ME_IN_PROD")
+    SECRET_KEY = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32))
     DEBUG = _get_bool("FLASK_DEBUG", False)
     TESTING = _get_bool("FLASK_TESTING", False)
 
