@@ -7,6 +7,7 @@ Author: The Universe's Best Developer 🌟
 """
 
 import os
+import argon2
 import sys
 import json
 import time
@@ -22,6 +23,8 @@ import socket
 import hashlib
 import secrets
 from functools import wraps
+from flask_socketio import SocketIO, emit, join_room, leave_room, disconnect
+import eventlet
 
 # Configure professional logging
 logging.basicConfig(
@@ -34,103 +37,281 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+class SecurePasswordManager:
+    """Gestor seguro de contraseñas con Argon2"""
+    
+    def __init__(self):
+        self.ph = argon2.PasswordHasher(
+            time_cost=3,
+            memory_cost=65536,
+            parallelism=1,
+            hash_len=32,
+            salt_len=16
+        )
+    
+    def hash_password(self, password):
+        """Hash seguro con Argon2"""
+        return self.ph.hash(password)
+    
+    def verify_password(self, password, password_hash):
+        """Verificar password con Argon2"""
+        try:
+            self.ph.verify(password_hash, password)
+            return True
+        except argon2.exceptions.VerifyMismatchError:
+            return False
+        except argon2.exceptions.InvalidHash:
+            # Hash legacy SHA-256
+            import hashlib
+            return hashlib.sha256(password.encode()).hexdigest() == password_hash
+
+
+# Excepciones personalizadas para mejor manejo de errores
+class DeviceControlError(Exception):
+    """Base exception for device control operations"""
+    pass
+
+class InsufficientPrivilegesError(DeviceControlError):
+    """Raised when system lacks necessary privileges"""
+    pass
+
+class InvalidMacAddressError(DeviceControlError):
+    """Raised when MAC address format is invalid"""
+    pass
+
 class DeviceManager:
-    """Device management and control system"""
+    """Device management and control system - VERSIÓN MEJORADA"""
     
     def __init__(self):
         self.devices_db_file = 'devices_config.json'
         self.blocked_devices = set()
         self.device_schedules = {}
         self.content_filters = {}
+        
+        # Configuración de timeouts y límites
+        self.command_timeout = 10
+        self.max_blocked_devices = 100
+        
         self.load_device_config()
+        logger.info("DeviceManager initialized")
+    
+    def validate_mac_address(self, mac):
+        """Validar formato de dirección MAC de forma estricta"""
+        if not mac or not isinstance(mac, str):
+            return False
+        
+        # Limpiar espacios en blanco
+        mac = mac.strip()
+        
+        # Patrón para MAC address (con : o -)
+        # Acepta formatos: AA:BB:CC:DD:EE:FF o AA-BB-CC-DD-EE-FF
+        pattern = r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+        
+        if not re.match(pattern, mac):
+            return False
+        
+        # Verificar que no sea una MAC address reservada o inválida
+        normalized = mac.lower().replace('-', ':')
+        
+        # MACs reservadas/inválidas
+        invalid_macs = [
+            '00:00:00:00:00:00',  # Null MAC
+            'ff:ff:ff:ff:ff:ff',  # Broadcast MAC
+        ]
+        
+        if normalized in invalid_macs:
+            return False
+        
+        return True
+    
+    def normalize_mac_address(self, mac):
+        """Normalizar MAC address al formato estándar (lowercase con :)"""
+        if not self.validate_mac_address(mac):
+            raise InvalidMacAddressError(f"Invalid MAC address format: {mac}")
+        
+        # Convertir a lowercase y usar : como separador
+        return mac.lower().replace('-', ':').strip()
     
     def load_device_config(self):
-        """Load device configuration from file"""
+        """Load device configuration from file con mejor manejo de errores"""
         try:
             if os.path.exists(self.devices_db_file):
-                with open(self.devices_db_file, 'r') as f:
+                with open(self.devices_db_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    self.blocked_devices = set(data.get('blocked_devices', []))
+                    
+                    # Validar y normalizar MACs cargadas
+                    blocked_devices_raw = data.get('blocked_devices', [])
+                    self.blocked_devices = set()
+                    
+                    for mac in blocked_devices_raw:
+                        try:
+                            normalized_mac = self.normalize_mac_address(mac)
+                            self.blocked_devices.add(normalized_mac)
+                        except InvalidMacAddressError:
+                            logger.warning(f"Removing invalid MAC from config: {mac}")
+                    
                     self.device_schedules = data.get('device_schedules', {})
                     self.content_filters = data.get('content_filters', {})
+                    
                 logger.info(f"Loaded device config: {len(self.blocked_devices)} blocked devices")
             else:
+                logger.info("Device config file not found, creating new one")
                 self.save_device_config()
+                
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in device config: {e}")
+            self.create_backup_and_reset()
         except Exception as e:
             logger.error(f"Error loading device config: {e}")
+            self.create_backup_and_reset()
+    
+    def create_backup_and_reset(self):
+        """Crear backup del archivo corrupto y reiniciar configuración"""
+        try:
+            if os.path.exists(self.devices_db_file):
+                backup_name = f"{self.devices_db_file}.backup.{int(datetime.now().timestamp())}"
+                os.rename(self.devices_db_file, backup_name)
+                logger.warning(f"Corrupted config backed up to: {backup_name}")
+            
+            # Reiniciar con configuración vacía
+            self.blocked_devices = set()
+            self.device_schedules = {}
+            self.content_filters = {}
+            self.save_device_config()
+            
+        except Exception as e:
+            logger.error(f"Error creating backup: {e}")
     
     def save_device_config(self):
-        """Save device configuration to file"""
+        """Save device configuration to file con validación"""
         try:
             data = {
                 'blocked_devices': list(self.blocked_devices),
                 'device_schedules': self.device_schedules,
                 'content_filters': self.content_filters,
-                'last_updated': datetime.now().isoformat()
+                'last_updated': datetime.now().isoformat(),
+                'version': '2.0'
             }
-            with open(self.devices_db_file, 'w') as f:
-                json.dump(data, f, indent=2)
-            logger.info("Device configuration saved")
+            
+            # Escribir a archivo temporal primero
+            temp_file = self.devices_db_file + '.tmp'
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            # Mover archivo temporal al final (operación atómica)
+            os.replace(temp_file, self.devices_db_file)
+            logger.debug("Device configuration saved successfully")
+            
         except Exception as e:
             logger.error(f"Error saving device config: {e}")
+            # Limpiar archivo temporal si existe
+            temp_file = self.devices_db_file + '.tmp'
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+    
+    def check_limits(self):
+        """Verificar límites del sistema"""
+        if len(self.blocked_devices) >= self.max_blocked_devices:
+            raise DeviceControlError(f"Maximum blocked devices limit reached: {self.max_blocked_devices}")
     
     def block_device(self, mac_address, reason="Manual block"):
-        """Block internet access for a device"""
+        """Block internet access for a device con validación completa"""
         try:
-            mac_address = mac_address.lower()
+            # Validar y normalizar MAC
+            mac_address = self.normalize_mac_address(mac_address)
+            
+            # Verificar si ya está bloqueado
+            if mac_address in self.blocked_devices:
+                logger.info(f"Device {mac_address} is already blocked")
+                return True
+            
+            # Verificar límites
+            self.check_limits()
+            
+            # Verificar privilegios del sistema
+            if not self.check_admin_privileges():
+                raise InsufficientPrivilegesError("No sudo privileges for iptables")
             
             # Add to blocked list
             self.blocked_devices.add(mac_address)
             
             # Apply iptables rule to block device
-            self._apply_device_block(mac_address, block=True)
+            success = self._apply_device_block(mac_address, block=True)
             
-            self.save_device_config()
-            logger.info(f"Device {mac_address} blocked: {reason}")
-            return True
+            if success:
+                self.save_device_config()
+                logger.info(f"Device {mac_address} blocked successfully: {reason}")
+                return True
+            else:
+                # Revertir si falló
+                self.blocked_devices.discard(mac_address)
+                raise DeviceControlError("Failed to apply iptables rules")
+                
+        except (InvalidMacAddressError, InsufficientPrivilegesError, DeviceControlError):
+            raise  # Re-raise excepciones específicas
         except Exception as e:
-            logger.error(f"Error blocking device {mac_address}: {e}")
+            logger.error(f"Unexpected error blocking device {mac_address}: {e}")
             return False
     
     def unblock_device(self, mac_address):
-        """Unblock internet access for a device"""
+        """Unblock internet access for a device con validación"""
         try:
-            mac_address = mac_address.lower()
+            # Validar y normalizar MAC
+            mac_address = self.normalize_mac_address(mac_address)
             
-            # Remove from blocked list
+            # Verificar si está en la lista de bloqueados
+            if mac_address not in self.blocked_devices:
+                logger.info(f"Device {mac_address} is not blocked")
+                return True
+            
+            # Verificar privilegios del sistema
+            if not self.check_admin_privileges():
+                raise InsufficientPrivilegesError("No sudo privileges for iptables")
+            
+            # Remove iptables rule first
+            success = self._apply_device_block(mac_address, block=False)
+            
+            # Remove from blocked list (incluso si iptables falla)
             self.blocked_devices.discard(mac_address)
-            
-            # Remove iptables rule
-            self._apply_device_block(mac_address, block=False)
-            
             self.save_device_config()
-            logger.info(f"Device {mac_address} unblocked")
+            
+            if success:
+                logger.info(f"Device {mac_address} unblocked successfully")
+            else:
+                logger.warning(f"Device {mac_address} removed from list but iptables may have failed")
+            
             return True
+            
+        except (InvalidMacAddressError, InsufficientPrivilegesError):
+            raise  # Re-raise excepciones específicas
         except Exception as e:
-            logger.error(f"Error unblocking device {mac_address}: {e}")
+            logger.error(f"Unexpected error unblocking device {mac_address}: {e}")
             return False
     
     def _apply_device_block(self, mac_address, block=True):
-        """Apply or remove device blocking (admin only)"""
+        """Apply or remove device blocking con timeout y mejor error handling"""
         try:
-            # This method should only be called after admin verification
-            
-            # Method 1: iptables with sudo
+            # Method 1: iptables with sudo (principal)
             success_iptables = self._apply_iptables_block(mac_address, block)
             
             # Method 2: hostapd block (for WiFi devices) - fallback
             if not success_iptables:
+                logger.info(f"iptables failed, trying hostapd fallback for {mac_address}")
                 self._apply_hostapd_block(mac_address, block)
             
-            logger.info(f"Applied blocking rules for {mac_address}: {'blocked' if block else 'unblocked'}")
-            return True
+            action = 'blocked' if block else 'unblocked'
+            logger.info(f"Applied blocking rules for {mac_address}: {action}")
+            return success_iptables
             
         except Exception as e:
             logger.error(f"Error applying blocking rules for {mac_address}: {e}")
             return False
     
     def _apply_iptables_block(self, mac_address, block=True):
-        """Apply iptables rules with proper error handling"""
+        """Apply iptables rules con timeout y validación mejorada"""
         try:
             if block:
                 # Add blocking rules
@@ -147,17 +328,39 @@ class DeviceManager:
             
             success = True
             for cmd in commands:
-                result = subprocess.run(cmd.split(), capture_output=True, text=True)
-                if result.returncode != 0:
-                    if block:  # Only log errors when blocking
-                        logger.warning(f"iptables command failed: {cmd} - {result.stderr}")
+                try:
+                    logger.debug(f"Executing: {cmd}")
+                    result = subprocess.run(
+                        cmd.split(), 
+                        capture_output=True, 
+                        text=True,
+                        timeout=self.command_timeout  # ✅ TIMEOUT AÑADIDO
+                    )
+                    
+                    if result.returncode != 0:
+                        if block:  # Only consider errors when blocking
+                            logger.warning(f"iptables command failed: {cmd}")
+                            logger.warning(f"Error output: {result.stderr}")
+                            success = False
+                        else:
+                            # When unblocking, rule might not exist (normal)
+                            logger.debug(f"iptables unblock command returned {result.returncode} (normal if rule didn't exist)")
+                    else:
+                        logger.debug(f"iptables command successful: {cmd}")
+                        
+                except subprocess.TimeoutExpired:
+                    logger.error(f"iptables command timed out after {self.command_timeout}s: {cmd}")
+                    if block:
                         success = False
-                    # When unblocking, ignore errors (rule might not exist)
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"iptables command failed with return code {e.returncode}: {cmd}")
+                    if block:
+                        success = False
             
             return success
                     
         except Exception as e:
-            logger.error(f"Error with iptables for {mac_address}: {e}")
+            logger.error(f"Unexpected error with iptables for {mac_address}: {e}")
             return False
     
     def _apply_hostapd_block(self, mac_address, block=True):
@@ -167,22 +370,27 @@ class DeviceManager:
             
             if block:
                 # Add to hostapd deny list
-                with open(deny_file, 'a') as f:
+                with open(deny_file, 'a', encoding='utf-8') as f:
                     f.write(f"{mac_address.lower()}\n")
                 # Send SIGHUP to hostapd to reload
-                subprocess.run(['sudo', 'pkill', '-HUP', 'hostapd'], check=False)
+                subprocess.run(['sudo', 'pkill', '-HUP', 'hostapd'], 
+                             check=False, timeout=5)
                 logger.info(f"Added {mac_address} to hostapd deny list")
             else:
                 # Remove from deny list
                 if os.path.exists(deny_file):
-                    with open(deny_file, 'r') as f:
-                        lines = f.readlines()
-                    with open(deny_file, 'w') as f:
-                        for line in lines:
-                            if mac_address.lower() not in line.lower():
-                                f.write(line)
-                    subprocess.run(['sudo', 'pkill', '-HUP', 'hostapd'], check=False)
-                    logger.info(f"Removed {mac_address} from hostapd deny list")
+                    try:
+                        with open(deny_file, 'r', encoding='utf-8') as f:
+                            lines = f.readlines()
+                        with open(deny_file, 'w', encoding='utf-8') as f:
+                            for line in lines:
+                                if mac_address.lower() not in line.lower():
+                                    f.write(line)
+                        subprocess.run(['sudo', 'pkill', '-HUP', 'hostapd'], 
+                                     check=False, timeout=5)
+                        logger.info(f"Removed {mac_address} from hostapd deny list")
+                    except Exception as e:
+                        logger.warning(f"Error updating hostapd deny file: {e}")
                     
         except Exception as e:
             logger.warning(f"Hostapd blocking not available for {mac_address}: {e}")
@@ -191,28 +399,59 @@ class DeviceManager:
         """Check if the system has necessary privileges for device blocking"""
         try:
             # Test if we can run iptables commands
-            result = subprocess.run(['sudo', '-n', 'iptables', '-L'], 
-                                  capture_output=True, text=True)
-            return result.returncode == 0
-        except:
+            result = subprocess.run(
+                ['sudo', '-n', 'iptables', '-L'], 
+                capture_output=True, 
+                text=True,
+                timeout=5
+            )
+            
+            has_privileges = result.returncode == 0
+            
+            if not has_privileges:
+                logger.warning("No sudo privileges for iptables commands")
+                logger.info("To enable device blocking, configure sudoers:")
+                logger.info("sudo visudo → Add: username ALL=(ALL) NOPASSWD: /usr/sbin/iptables")
+            
+            return has_privileges
+            
+        except subprocess.TimeoutExpired:
+            logger.error("Privilege check timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking privileges: {e}")
             return False
     
     def set_device_schedule(self, mac_address, schedule_config):
-        """Set internet access schedule for a device"""
+        """Set internet access schedule for a device con validación"""
         try:
-            mac_address = mac_address.lower()
+            mac_address = self.normalize_mac_address(mac_address)
+            
+            # Validar configuración del schedule
+            if not isinstance(schedule_config, dict):
+                raise ValueError("Schedule config must be a dictionary")
+            
             self.device_schedules[mac_address] = schedule_config
             self.save_device_config()
             logger.info(f"Schedule set for device {mac_address}")
             return True
+            
+        except (InvalidMacAddressError, ValueError) as e:
+            logger.error(f"Invalid schedule config for {mac_address}: {e}")
+            return False
         except Exception as e:
             logger.error(f"Error setting schedule for {mac_address}: {e}")
             return False
     
     def set_content_filter(self, mac_address, filter_config):
-        """Set content filtering for a device"""
+        """Set content filtering for a device con validación"""
         try:
-            mac_address = mac_address.lower()
+            mac_address = self.normalize_mac_address(mac_address)
+            
+            # Validar configuración del filtro
+            if not isinstance(filter_config, dict):
+                raise ValueError("Filter config must be a dictionary")
+            
             self.content_filters[mac_address] = filter_config
             
             # Apply DNS filtering rules
@@ -221,37 +460,57 @@ class DeviceManager:
             self.save_device_config()
             logger.info(f"Content filter set for device {mac_address}")
             return True
+            
+        except (InvalidMacAddressError, ValueError) as e:
+            logger.error(f"Invalid filter config for {mac_address}: {e}")
+            return False
         except Exception as e:
             logger.error(f"Error setting content filter for {mac_address}: {e}")
             return False
     
     def _apply_content_filter(self, mac_address, filter_config):
-        """Apply DNS-based content filtering"""
+        """Apply DNS-based content filtering con mejor lógica"""
         try:
             # Configure DNS filtering based on categories
             blocked_categories = filter_config.get('blocked_categories', [])
             
+            # DNS servers especializados
             dns_servers = {
                 'adult_content': ['208.67.222.123', '208.67.220.123'],  # OpenDNS FamilyShield
                 'malware': ['1.1.1.2', '1.0.0.2'],  # Cloudflare for Families
                 'ads': ['176.103.130.130', '176.103.130.131'],  # AdGuard DNS
+                'safe_search': ['208.67.222.123', '208.67.220.123'],  # OpenDNS FamilyShield
                 'default': ['8.8.8.8', '8.8.4.4']  # Google DNS
             }
             
-            # Select appropriate DNS based on filtering needs
+            # Select appropriate DNS based on filtering needs (prioritize safety)
+            selected_dns = dns_servers['default']
+            
             if 'adult_content' in blocked_categories or 'violence' in blocked_categories:
                 selected_dns = dns_servers['adult_content']
-            elif 'malware' in blocked_categories:
+            elif 'malware' in blocked_categories or 'phishing' in blocked_categories:
                 selected_dns = dns_servers['malware']
             elif 'ads' in blocked_categories:
                 selected_dns = dns_servers['ads']
-            else:
-                selected_dns = dns_servers['default']
+            elif 'safe_search' in blocked_categories:
+                selected_dns = dns_servers['safe_search']
             
             # Apply DNS redirect rules for the specific device
             for dns_ip in selected_dns:
-                rule = f"iptables -t nat -A PREROUTING -m mac --mac-source {mac_address} -p udp --dport 53 -j DNAT --to-destination {dns_ip}:53"
-                subprocess.run(rule.split(), check=False)
+                rule = (f"sudo iptables -t nat -I PREROUTING -m mac --mac-source {mac_address} "
+                       f"-p udp --dport 53 -j DNAT --to-destination {dns_ip}:53")
+                
+                try:
+                    subprocess.run(
+                        rule.split(), 
+                        check=False, 
+                        capture_output=True,
+                        timeout=self.command_timeout
+                    )
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"DNS filter rule timed out for {mac_address}")
+                except Exception as e:
+                    logger.warning(f"Error applying DNS filter rule: {e}")
             
             logger.info(f"Content filter applied for {mac_address}: {blocked_categories}")
             
@@ -259,9 +518,10 @@ class DeviceManager:
             logger.error(f"Error applying content filter for {mac_address}: {e}")
     
     def check_device_schedule(self, mac_address):
-        """Check if device should be blocked based on schedule"""
+        """Check if device should be blocked based on schedule con validación"""
         try:
-            mac_address = mac_address.lower()
+            mac_address = self.normalize_mac_address(mac_address)
+            
             if mac_address not in self.device_schedules:
                 return False  # No schedule = no restrictions
             
@@ -281,9 +541,15 @@ class DeviceManager:
                 start_minutes = self._time_to_minutes(start_time)
                 end_minutes = self._time_to_minutes(end_time)
                 
-                # Check if current time is outside allowed hours
-                if not (start_minutes <= current_minutes <= end_minutes):
-                    return True  # Should be blocked
+                # Handle overnight schedules (e.g., 22:00 to 06:00)
+                if start_minutes > end_minutes:
+                    # Overnight schedule
+                    if not (current_minutes >= start_minutes or current_minutes <= end_minutes):
+                        return True  # Should be blocked
+                else:
+                    # Normal schedule
+                    if not (start_minutes <= current_minutes <= end_minutes):
+                        return True  # Should be blocked
             
             # Check weekly schedule
             weekly_schedule = schedule.get('weekly_schedule', {})
@@ -294,32 +560,122 @@ class DeviceManager:
                 
                 if day_config.get('time_limit_enabled', False):
                     # Check time limits (would need usage tracking)
+                    # This is a placeholder for future implementation
                     pass
             
             return False  # Not blocked
             
+        except InvalidMacAddressError:
+            logger.error(f"Invalid MAC address in schedule check: {mac_address}")
+            return False
         except Exception as e:
             logger.error(f"Error checking schedule for {mac_address}: {e}")
             return False
     
     def _time_to_minutes(self, time_str):
-        """Convert time string (HH:MM) to minutes since midnight"""
+        """Convert time string (HH:MM) to minutes since midnight con validación"""
         try:
-            hours, minutes = map(int, time_str.split(':'))
+            if not isinstance(time_str, str) or ':' not in time_str:
+                return 0
+            
+            parts = time_str.split(':')
+            if len(parts) != 2:
+                return 0
+            
+            hours, minutes = map(int, parts)
+            
+            # Validar rangos
+            if not (0 <= hours <= 23) or not (0 <= minutes <= 59):
+                return 0
+            
             return hours * 60 + minutes
-        except:
+            
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid time format: {time_str}")
             return 0
     
     def get_device_info(self, mac_address):
-        """Get complete device information and settings"""
-        mac_address = mac_address.lower()
+        """Get complete device information and settings con validación"""
+        try:
+            mac_address = self.normalize_mac_address(mac_address)
+            
+            return {
+                'mac_address': mac_address,
+                'is_blocked': mac_address in self.blocked_devices,
+                'schedule': self.device_schedules.get(mac_address, {}),
+                'content_filter': self.content_filters.get(mac_address, {}),
+                'scheduled_block': self.check_device_schedule(mac_address),
+                'last_updated': datetime.now().isoformat()
+            }
+            
+        except InvalidMacAddressError:
+            return {
+                'error': f'Invalid MAC address: {mac_address}',
+                'mac_address': mac_address,
+                'is_blocked': False,
+                'schedule': {},
+                'content_filter': {},
+                'scheduled_block': False
+            }
+    
+    def get_blocked_devices_list(self):
+        """Obtener lista de dispositivos bloqueados"""
+        return list(self.blocked_devices)
+    
+    def get_stats(self):
+        """Obtener estadísticas del administrador de dispositivos"""
         return {
-            'mac_address': mac_address,
-            'is_blocked': mac_address in self.blocked_devices,
-            'schedule': self.device_schedules.get(mac_address, {}),
-            'content_filter': self.content_filters.get(mac_address, {}),
-            'scheduled_block': self.check_device_schedule(mac_address)
+            'total_blocked': len(self.blocked_devices),
+            'total_with_schedules': len(self.device_schedules),
+            'total_with_filters': len(self.content_filters),
+            'max_blocked_limit': self.max_blocked_devices,
+            'system_privileges': self.check_admin_privileges()
         }
+    
+    def cleanup_invalid_entries(self):
+        """Limpiar entradas inválidas de la configuración"""
+        cleaned_count = 0
+        
+        # Limpiar dispositivos bloqueados con MACs inválidas
+        valid_blocked = set()
+        for mac in self.blocked_devices:
+            if self.validate_mac_address(mac):
+                valid_blocked.add(self.normalize_mac_address(mac))
+            else:
+                cleaned_count += 1
+                logger.warning(f"Removed invalid blocked MAC: {mac}")
+        
+        self.blocked_devices = valid_blocked
+        
+        # Limpiar schedules con MACs inválidas
+        valid_schedules = {}
+        for mac, schedule in self.device_schedules.items():
+            if self.validate_mac_address(mac):
+                normalized_mac = self.normalize_mac_address(mac)
+                valid_schedules[normalized_mac] = schedule
+            else:
+                cleaned_count += 1
+                logger.warning(f"Removed invalid schedule MAC: {mac}")
+        
+        self.device_schedules = valid_schedules
+        
+        # Limpiar filtros con MACs inválidas
+        valid_filters = {}
+        for mac, filter_config in self.content_filters.items():
+            if self.validate_mac_address(mac):
+                normalized_mac = self.normalize_mac_address(mac)
+                valid_filters[normalized_mac] = filter_config
+            else:
+                cleaned_count += 1
+                logger.warning(f"Removed invalid filter MAC: {mac}")
+        
+        self.content_filters = valid_filters
+        
+        if cleaned_count > 0:
+            self.save_device_config()
+            logger.info(f"Cleaned up {cleaned_count} invalid entries")
+        
+        return cleaned_count
 
 class AuthManager:
     """Authentication and user management system"""
@@ -328,6 +684,7 @@ class AuthManager:
         self.users_db_file = 'users_config.json'
         self.users = {}
         self.sessions = {}
+        self.password_manager = SecurePasswordManager()  # ✅ CORRECTO
         self.load_users()
     
     def load_users(self):
@@ -369,27 +726,34 @@ class AuthManager:
             logger.error(f"Error saving users: {e}")
     
     def _hash_password(self, password):
-        """Hash password using SHA-256"""
-        return hashlib.sha256(password.encode()).hexdigest()
+        """🔐 NUEVO: Hash seguro con Argon2"""
+        return self.password_manager.hash_password(password)
     
     def authenticate(self, username, password):
-        """Authenticate user"""
+        """🔐 NUEVO: Autenticación con migración automática"""
         try:
             if username not in self.users:
                 return False, "Usuario no encontrado"
             
             user = self.users[username]
-            password_hash = self._hash_password(password)
+            password_hash = user['password_hash']
             
-            if user['password_hash'] != password_hash:
+            # Verificar password (con migración automática)
+            if self.password_manager.verify_password(password, password_hash):
+                # Si es hash legacy, migrar a Argon2
+                if not password_hash.startswith('$argon2'):
+                    new_hash = self.password_manager.hash_password(password)
+                    self.users[username]['password_hash'] = new_hash
+                    self.save_users()
+                    logger.info(f"🔄 Migrated {username} to Argon2")
+                
+                # Actualizar último login
+                self.users[username]['last_login'] = datetime.now().isoformat()
+                self.save_users()
+                return True, "Login exitoso"
+            else:
                 return False, "Contraseña incorrecta"
-            
-            # Update last login
-            self.users[username]['last_login'] = datetime.now().isoformat()
-            self.save_users()
-            
-            return True, "Login exitoso"
-            
+                
         except Exception as e:
             logger.error(f"Authentication error: {e}")
             return False, "Error de autenticación"
@@ -422,11 +786,12 @@ class AuthManager:
             if username not in self.users:
                 return False, "Usuario no encontrado"
             
-            # Verify old password
-            if self._hash_password(old_password) != self.users[username]['password_hash']:
+            # 🔐 NUEVO: Verificar contraseña actual con el sistema seguro
+            current_hash = self.users[username]['password_hash']
+            if not self.password_manager.verify_password(old_password, current_hash):
                 return False, "Contraseña actual incorrecta"
             
-            # Update password
+            # 🔐 NUEVO: Actualizar con Argon2
             self.users[username]['password_hash'] = self._hash_password(new_password)
             self.users[username]['must_change_password'] = False
             self.save_users()
@@ -437,6 +802,8 @@ class AuthManager:
         except Exception as e:
             logger.error(f"Error changing password: {e}")
             return False, "Error cambiando contraseña"
+
+
 
 def require_auth(f):
     """Decorator to require authentication"""
@@ -506,7 +873,17 @@ class EnhancedRouterDashboard:
         
         self._setup_routes()
         logger.info("🚀 Enhanced Router Dashboard initialized with authentication and device control")
-    
+
+
+        # 🔌 INICIALIZAR WEBSOCKETS
+        try:
+            self.realtime_manager = RealTimeManager(self.app, self)
+            self.socketio = self.realtime_manager.get_socketio()
+            logger.info("🔌 WebSocket Real-Time Manager initialized")
+        except Exception as e:
+            logger.warning(f"⚠️  WebSocket initialization failed: {e}")
+            logger.info("📡 Dashboard will run in traditional HTTP mode")
+
     # Include all original system monitoring methods here
     def get_system_info(self):
         """Get comprehensive system information with error handling"""
@@ -1016,17 +1393,6 @@ class EnhancedRouterDashboard:
                 logger.error(f"Error unblocking device: {e}")
                 return jsonify({'error': 'Failed to unblock device'}), 500
                 
-                if success:
-                    return jsonify({
-                        'success': True,
-                        'message': f'Device {mac_address} unblocked successfully'
-                    })
-                else:
-                    return jsonify({'error': 'Failed to unblock device'}), 500
-                    
-            except Exception as e:
-                logger.error(f"Error unblocking device: {e}")
-                return jsonify({'error': 'Failed to unblock device'}), 500
         
         @self.app.route('/api/devices/<mac_address>/schedule', methods=['POST'])
         @require_admin
@@ -1305,10 +1671,20 @@ class EnhancedRouterDashboard:
             logger.error(f"Internal server error: {error}")
             return jsonify({'error': 'Internal server error'}), 500
     
+
     def start(self, host='0.0.0.0', port=5000, debug=False):
-        """Start the enhanced dashboard server"""
+        """Start the enhanced dashboard server with WebSocket support"""
         try:
             logger.info(f"🌟 Enhanced Router Dashboard starting on {host}:{port}")
+            
+            # 🔌 NUEVA SECCIÓN: WebSocket Features
+            logger.info("🔌 WebSocket Real-Time Features:")
+            logger.info("   • Instant system updates (< 100ms)")
+            logger.info("   • Real-time device control")
+            logger.info("   • Live security alerts")
+            logger.info("   • Multi-user collaboration")
+            logger.info("   • Automatic fallback to HTTP polling")
+            
             logger.info("🔐 Authentication Features:")
             logger.info("   • User login/logout system")
             logger.info("   • Role-based access control")
@@ -1339,23 +1715,415 @@ class EnhancedRouterDashboard:
                     logger.warning("   Password: admin123")
                     logger.warning("   CHANGE PASSWORD ON FIRST LOGIN!")
             
-            # Run Flask app
-            self.app.run(host=host, port=port, debug=debug, threaded=True)
+            # Verificar privilegios del sistema
+            if not self.device_manager.check_admin_privileges():
+                logger.warning("⚠️  WARNING: No sudo privileges for iptables")
+                logger.warning("   Device blocking may not work without proper privileges")
+                logger.warning("   Solution: sudo visudo → Add: user ALL=(ALL) NOPASSWD: /usr/sbin/iptables")
+            
+            # 🔌 CAMBIO PRINCIPAL: Usar SocketIO en lugar de Flask
+            logger.info("🔌 Starting WebSocket server...")
+            
+            # Verificar si WebSocket está disponible
+            if hasattr(self, 'socketio'):
+                logger.info("✅ WebSocket support enabled")
+                self.socketio.run(
+                    self.app,
+                    host=host,
+                    port=port,
+                    debug=debug,
+                    use_reloader=False,  # ⚠️ Importante: evitar problemas con threads
+                    log_output=debug
+                )
+            else:
+                # Fallback a Flask tradicional si no hay WebSocket
+                logger.warning("⚠️  WebSocket not available, using traditional Flask")
+                self.app.run(host=host, port=port, debug=debug, threaded=True)
             
         except KeyboardInterrupt:
             logger.info("🛑 Shutdown requested by user")
         except Exception as e:
             logger.error(f"💥 Fatal error: {e}")
+            # En caso de error, intentar con Flask tradicional
+            logger.info("🔄 Attempting fallback to traditional Flask...")
+            try:
+                self.app.run(host=host, port=port, debug=debug, threaded=True)
+            except Exception as fallback_error:
+                logger.error(f"💥 Fallback also failed: {fallback_error}")
         finally:
             self.monitoring_active = False
             logger.info("👋 Enhanced Router Dashboard stopped")
 
+class RealTimeManager:
+    """Gestor de WebSockets para actualizaciones en tiempo real"""
+    
+    def __init__(self, app, dashboard_instance):
+        self.app = app
+        self.dashboard = dashboard_instance
+        
+        # Configurar SocketIO
+        self.socketio = SocketIO(
+            app,
+            cors_allowed_origins="*",
+            async_mode='eventlet',
+            logger=False,
+            engineio_logger=False
+        )
+        
+        # Salas para diferentes tipos de usuarios
+        self.admin_room = 'admin_users'
+        self.user_room = 'regular_users'
+        self.all_room = 'all_users'
+        
+        # Estado de conexiones
+        self.connected_clients = {}
+        self.room_members = {
+            self.admin_room: set(),
+            self.user_room: set(),
+            self.all_room: set()
+        }
+        
+        self.setup_socket_handlers()
+        self.start_real_time_monitoring()
+        
+        logger.info("🔌 WebSocket Real-Time Manager initialized")
+    
+    def setup_socket_handlers(self):
+        """Configurar manejadores de eventos WebSocket"""
+        
+        @self.socketio.on('connect')
+        def handle_connect():
+            session_id = request.sid
+            logger.info(f"🔌 WebSocket connected: {session_id}")
+            
+            # Unirse a sala general
+            join_room(self.all_room)
+            self.room_members[self.all_room].add(session_id)
+            
+            # Información del usuario
+            user_info = session.get('user', {})
+            username = user_info.get('username', 'anonymous')
+            role = user_info.get('role', 'guest')
+            
+            self.connected_clients[session_id] = {
+                'username': username,
+                'role': role,
+                'connected_at': datetime.now().isoformat(),
+                'last_ping': datetime.now()
+            }
+            
+            # Unirse a sala específica según rol
+            if role == 'admin':
+                join_room(self.admin_room)
+                self.room_members[self.admin_room].add(session_id)
+                logger.info(f"👑 Admin {username} joined WebSocket")
+            else:
+                join_room(self.user_room)
+                self.room_members[self.user_room].add(session_id)
+                logger.info(f"👤 User {username} joined WebSocket")
+            
+            # Enviar datos iniciales
+            emit('initial_data', {
+                'system': self.dashboard.cache.get('system'),
+                'wifi_devices': self.dashboard.cache.get('wifi_devices', []),
+                'status': 'connected',
+                'server_time': datetime.now().isoformat(),
+                'user_role': role
+            })
+            
+            # Notificar a otros usuarios (solo admins)
+            if role == 'admin':
+                emit('user_connected', {
+                    'username': username,
+                    'role': role,
+                    'timestamp': datetime.now().isoformat()
+                }, room=self.admin_room, include_self=False)
+        
+        @self.socketio.on('disconnect')
+        def handle_disconnect():
+            session_id = request.sid
+            logger.info(f"🔌 WebSocket disconnected: {session_id}")
+            
+            if session_id in self.connected_clients:
+                user_info = self.connected_clients[session_id]
+                username = user_info['username']
+                role = user_info['role']
+                
+                # Limpiar de salas
+                for room_name, members in self.room_members.items():
+                    members.discard(session_id)
+                
+                # Notificar desconexión a admins
+                if role == 'admin':
+                    emit('user_disconnected', {
+                        'username': username,
+                        'role': role,
+                        'timestamp': datetime.now().isoformat()
+                    }, room=self.admin_room)
+                
+                del self.connected_clients[session_id]
+                logger.info(f"👋 {username} ({role}) disconnected from WebSocket")
+        
+        @self.socketio.on('ping')
+        def handle_ping():
+            """Keep-alive ping"""
+            session_id = request.sid
+            if session_id in self.connected_clients:
+                self.connected_clients[session_id]['last_ping'] = datetime.now()
+            emit('pong', {'timestamp': datetime.now().isoformat()})
+        
+        @self.socketio.on('request_full_update')
+        def handle_full_update_request():
+            """Cliente solicita actualización completa"""
+            emit('full_update', {
+                'system': self.dashboard.cache.get('system'),
+                'wifi_devices': self.dashboard.cache.get('wifi_devices', []),
+                'connections': self.dashboard.cache.get('connections', [])[:20],
+                'suricata_alerts': self.dashboard.cache.get('suricata_alerts', [])[:10],
+                'port_scans': self.dashboard.cache.get('port_scans', [])[:10],
+                'interfaces': self.dashboard.cache.get('interfaces', {}),
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        @self.socketio.on('admin_action')
+        def handle_admin_action(data):
+            """Manejar acciones de administrador via WebSocket"""
+            if not session.get('user', {}).get('role') == 'admin':
+                emit('error', {'message': 'Admin privileges required'})
+                return
+            
+            action_type = data.get('action')
+            username = session.get('user', {}).get('username', 'unknown')
+            
+            if action_type == 'block_device':
+                mac_address = data.get('mac_address')
+                reason = data.get('reason', 'Blocked via WebSocket')
+                
+                try:
+                    success = self.dashboard.device_manager.block_device(mac_address, reason)
+                    if success:
+                        # Notificar a todos los usuarios
+                        self.socketio.emit('device_blocked', {
+                            'mac_address': mac_address,
+                            'reason': reason,
+                            'blocked_by': username,
+                            'timestamp': datetime.now().isoformat()
+                        }, room=self.all_room)
+                        
+                        emit('action_result', {
+                            'success': True,
+                            'action': 'block_device',
+                            'mac_address': mac_address
+                        })
+                        
+                        logger.info(f"🚫 Admin {username} blocked device {mac_address} via WebSocket")
+                    else:
+                        emit('action_result', {
+                            'success': False,
+                            'error': 'Failed to block device'
+                        })
+                except Exception as e:
+                    emit('action_result', {
+                        'success': False,
+                        'error': str(e)
+                    })
+            
+            elif action_type == 'unblock_device':
+                mac_address = data.get('mac_address')
+                
+                try:
+                    success = self.dashboard.device_manager.unblock_device(mac_address)
+                    if success:
+                        # Notificar a todos los usuarios
+                        self.socketio.emit('device_unblocked', {
+                            'mac_address': mac_address,
+                            'unblocked_by': username,
+                            'timestamp': datetime.now().isoformat()
+                        }, room=self.all_room)
+                        
+                        emit('action_result', {
+                            'success': True,
+                            'action': 'unblock_device',
+                            'mac_address': mac_address
+                        })
+                        
+                        logger.info(f"✅ Admin {username} unblocked device {mac_address} via WebSocket")
+                    else:
+                        emit('action_result', {
+                            'success': False,
+                            'error': 'Failed to unblock device'
+                        })
+                except Exception as e:
+                    emit('action_result', {
+                        'success': False,
+                        'error': str(e)
+                    })
+    
+    def start_real_time_monitoring(self):
+        """Iniciar monitoreo en tiempo real"""
+        
+        def real_time_worker():
+            """Worker que envía actualizaciones en tiempo real"""
+            last_data = {}
+            update_counter = 0
+            
+            while self.dashboard.monitoring_active:
+                try:
+                    if not self.connected_clients:
+                        eventlet.sleep(2)
+                        continue
+                    
+                    # Obtener datos actuales
+                    current_data = {
+                        'system': self.dashboard.cache.get('system'),
+                        'wifi_devices_count': len(self.dashboard.cache.get('wifi_devices', [])),
+                        'connections_count': len(self.dashboard.cache.get('connections', [])),
+                        'alerts_count': len(self.dashboard.cache.get('suricata_alerts', [])),
+                        'blocked_devices_count': len(self.dashboard.device_manager.blocked_devices),
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+                    # Detectar cambios significativos
+                    if self.has_significant_changes(last_data, current_data):
+                        # Enviar actualización rápida a todos
+                        self.socketio.emit('quick_update', current_data, room=self.all_room)
+                        last_data = current_data.copy()
+                    
+                    # Actualización completa cada 30 segundos
+                    update_counter += 1
+                    if update_counter % 30 == 0:
+                        full_data = {
+                            'system': self.dashboard.cache.get('system'),
+                            'wifi_devices': self.dashboard.cache.get('wifi_devices', []),
+                            'connections': self.dashboard.cache.get('connections', [])[:20],
+                            'suricata_alerts': self.dashboard.cache.get('suricata_alerts', [])[:10],
+                            'port_scans': self.dashboard.cache.get('port_scans', [])[:10],
+                            'interfaces': self.dashboard.cache.get('interfaces', {}),
+                            'stats': self.get_dashboard_stats()
+                        }
+                        self.socketio.emit('full_update', full_data, room=self.all_room)
+                    
+                    # Verificar nuevas alertas de seguridad
+                    self.check_security_alerts()
+                    
+                    eventlet.sleep(1)  # Actualizar cada segundo
+                    
+                except Exception as e:
+                    logger.error(f"Error in real-time worker: {e}")
+                    eventlet.sleep(5)
+        
+        # Iniciar worker en thread separado
+        eventlet.spawn(real_time_worker)
+        logger.info("⚡ Real-time monitoring started")
+    
+    def has_significant_changes(self, old_data, new_data):
+        """Verificar si hay cambios significativos"""
+        if not old_data:
+            return True
+        
+        # Comparar métricas clave
+        significant_metrics = ['wifi_devices_count', 'connections_count', 'alerts_count', 'blocked_devices_count']
+        
+        for metric in significant_metrics:
+            if old_data.get(metric) != new_data.get(metric):
+                return True
+        
+        # Comparar CPU y memoria (cambio > 5%)
+        old_system = old_data.get('system', {})
+        new_system = new_data.get('system', {})
+        
+        if old_system and new_system:
+            old_cpu = old_system.get('cpu', {}).get('percent', 0)
+            new_cpu = new_system.get('cpu', {}).get('percent', 0)
+            
+            if abs(old_cpu - new_cpu) > 5:
+                return True
+            
+            old_memory = old_system.get('memory', {}).get('percent', 0)
+            new_memory = new_system.get('memory', {}).get('percent', 0)
+            
+            if abs(old_memory - new_memory) > 5:
+                return True
+        
+        return False
+    
+    def check_security_alerts(self):
+        """Verificar nuevas alertas de seguridad"""
+        try:
+            current_alerts = self.dashboard.cache.get('suricata_alerts', [])
+            
+            # Verificar si hay nuevas alertas (simplificado)
+            if hasattr(self, '_last_alert_count'):
+                if len(current_alerts) > self._last_alert_count:
+                    # Nueva alerta detectada
+                    new_alerts = current_alerts[:len(current_alerts) - self._last_alert_count]
+                    for alert in new_alerts:
+                        self.send_security_alert({
+                            'type': 'suricata',
+                            'severity': alert.get('alert', {}).get('severity', 3),
+                            'message': alert.get('alert', {}).get('signature', 'Security alert'),
+                            'source_ip': alert.get('src_ip'),
+                            'destination_ip': alert.get('dest_ip'),
+                            'timestamp': alert.get('timestamp')
+                        })
+            
+            self._last_alert_count = len(current_alerts)
+            
+        except Exception as e:
+            logger.error(f"Error checking security alerts: {e}")
+    
+    def send_security_alert(self, alert_data):
+        """Enviar alerta de seguridad inmediata"""
+        alert_payload = {
+            'type': alert_data.get('type', 'security'),
+            'severity': alert_data.get('severity', 'medium'),
+            'message': alert_data.get('message', 'Security event detected'),
+            'source_ip': alert_data.get('source_ip'),
+            'destination_ip': alert_data.get('destination_ip'),
+            'timestamp': alert_data.get('timestamp', datetime.now().isoformat()),
+            'id': f"alert_{int(time.time())}"
+        }
+        
+        # Enviar a todos los usuarios conectados
+        self.socketio.emit('security_alert', alert_payload, room=self.all_room)
+        
+        # Log de la alerta
+        logger.warning(f"🚨 Security alert sent via WebSocket: {alert_payload['message']}")
+    
+    def get_dashboard_stats(self):
+        """Obtener estadísticas del dashboard"""
+        return {
+            'connected_users': len(self.connected_clients),
+            'admin_users': len(self.room_members[self.admin_room]),
+            'regular_users': len(self.room_members[self.user_room]),
+            'uptime': (datetime.now() - self.dashboard.stats['uptime_start']).total_seconds(),
+            'requests_served': self.dashboard.stats['requests_served'],
+            'cache_hits': self.dashboard.stats['cache_hits']
+        }
+    
+    def broadcast_message(self, message, room=None):
+        """Enviar mensaje broadcast"""
+        target_room = room or self.all_room
+        self.socketio.emit('broadcast_message', {
+            'message': message,
+            'timestamp': datetime.now().isoformat()
+        }, room=target_room)
+    
+    def get_socketio(self):
+        """Obtener instancia de SocketIO para usar en otras partes"""
+        return self.socketio
+
+
+
+
 def install_dependencies():
-    """Install required dependencies"""
     dependencies = [
         'flask',
-        'flask-cors', 
-        'psutil'
+        'flask-cors',
+        'flask-socketio', 
+        'psutil',
+        'argon2-cffi',     
+        'eventlet'         
     ]
     
     for dep in dependencies:

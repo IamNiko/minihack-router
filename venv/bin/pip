@@ -1,4 +1,4 @@
-#!/home/pkap/minihack-router/venv/bin/python3
+#!/home/niko/cyber/minihack-router/venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

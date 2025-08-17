@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🔧 Router Dashboard - Control Avanzado</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.12.1/plotly.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -1616,7 +1617,84 @@
                 console.error('Error updating port scans:', error);
             }
         }
-        
+
+        let socket = null;
+
+        function initWebSocket() {
+            if (typeof io !== 'undefined') {
+                socket = io();
+                
+                socket.on('connect', () => {
+                    console.log('WebSocket connected');
+                    updateDebugInfo('WebSocket conectado ✓');
+                });
+                
+                socket.on('disconnect', () => {
+                    console.log('WebSocket disconnected');
+                    updateDebugInfo('WebSocket desconectado ⚠️', true);
+                });
+                
+                socket.on('quick_update', (data) => {
+                    // Actualizar métricas en tiempo real
+                    if (data.system) {
+                        updateSystemMetrics(data.system);
+                    }
+                    if (data.wifi_devices_count !== undefined) {
+                        document.getElementById('wifi-devices').textContent = data.wifi_devices_count;
+                    }
+                    if (data.blocked_devices_count !== undefined) {
+                        // Actualizar contador de dispositivos bloqueados si tienes ese elemento
+                    }
+                });
+                
+                socket.on('full_update', (data) => {
+                    // Actualización completa cada 30 segundos
+                    if (data.system) updateSystemMetrics(data.system);
+                    if (data.wifi_devices) updateWifiDevices(data.wifi_devices);
+                    if (data.connections) updateConnections(data.connections);
+                    if (data.suricata_alerts) updateSuricataAlerts(data.suricata_alerts);
+                    if (data.port_scans) updatePortScans(data.port_scans);
+                });
+                
+                socket.on('device_blocked', (data) => {
+                    showAlert(`Dispositivo ${data.mac_address} bloqueado por ${data.blocked_by}`, 'success');
+                    updateDashboard(); // Refresh
+                });
+                
+                socket.on('device_unblocked', (data) => {
+                    showAlert(`Dispositivo ${data.mac_address} desbloqueado por ${data.unblocked_by}`, 'success');
+                    updateDashboard(); // Refresh
+                });
+                
+                socket.on('security_alert', (data) => {
+                    showAlert(`🚨 Alerta de seguridad: ${data.message}`, 'error');
+                    updateDashboard(); // Refresh security data
+                });
+                
+            } else {
+                console.warn('Socket.IO no está cargado, usando polling tradicional');
+                updateDebugInfo('Modo HTTP tradicional', true);
+            }
+        }
+
+        // Añadir función para actualizar métricas del sistema
+        function updateSystemMetrics(systemData) {
+            if (systemData && systemData.cpu) {
+                document.getElementById('cpu-usage').textContent = systemData.cpu.percent.toFixed(1) + '%';
+                document.getElementById('memory-usage').textContent = systemData.memory.percent.toFixed(1) + '%';
+                document.getElementById('cpu-temp').textContent = systemData.cpu.temperature + '°C';
+                
+                // Update gauges
+                createCpuGauge(systemData.cpu.percent);
+                createRamGauge(systemData.memory.percent);
+            }
+        }
+        // Llamar en DOMContentLoaded
+        document.addEventListener('DOMContentLoaded', function() {
+            initWebSocket(); // ✅ AÑADIR ESTA LÍNEA
+            // ... resto del código existente
+        });
+                
         console.log('Enhanced Router Dashboard loaded with device control');
     </script>
 </body>
